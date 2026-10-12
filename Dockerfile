@@ -28,3 +28,4 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 CMD ["python", "-c", "import pygame, requests; from models import WorldState, Drone, Incident; print('Firewatch Swarm container ready')"]
+    
