@@ -1,6 +1,6 @@
 from allocation import assign_available_drones
 from events import extinguish_incident
-from models import DroneStatus
+from models import DroneStatus, IncidentStatus
 from movement import (
     advance_world,
     request_return_to_base,
@@ -80,3 +80,22 @@ def test_drone_returns_and_refills():
     assert drone.status == DroneStatus.IDLE
     assert drone.battery_pct == 100
     assert drone.water_pct == 100
+def test_drone_can_extinguish_fire():
+    world = create_initial_world()
+    assignments = assign_available_drones(world)
+
+    fire_id, drone_id = next(iter(assignments.items()))
+    fire = world.incidents[fire_id]
+    drone = world.drones[drone_id]
+
+    fire.severity = 1
+    fire.spread_per_tick = 0
+    drone.status = DroneStatus.SUPPRESSING
+    drone.x, drone.y = fire.x, fire.y
+
+    for _ in range(4):
+        advance_world(world)
+
+    assert fire.status == IncidentStatus.EXTINGUISHED
+    assert drone.status == DroneStatus.IDLE
+    assert drone.target_incident_id is None

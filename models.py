@@ -44,7 +44,8 @@ class Incident:
     spread_per_tick: float = 0.1
     status: IncidentStatus = IncidentStatus.ACTIVE
     created_tick: int = 0
-
+    spread_progress: float = 0.0
+    suppression_progress: float = 0.0
 
 @dataclass
 class WorldState:

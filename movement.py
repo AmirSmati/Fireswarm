@@ -5,6 +5,8 @@ from models import (
     WorldState,
 )
 
+from events import extinguish_incident
+from fire_dynamics import advance_fire_spread
 
 def _record(world, event_type, drone_id, message):
     event = WorldEvent(
@@ -51,6 +53,8 @@ def request_return_to_base(world, drone_id):
 def advance_world(world, battery_drain_per_move=0.5):
     """Advance the world by one simulation tick."""
     world.tick += 1
+    
+    advance_fire_spread(world)
 
     for drone in world.drones.values():
 
@@ -68,6 +72,7 @@ def advance_world(world, battery_drain_per_move=0.5):
                         f"{drone.drone_id} released inactive target")
                 continue
 
+        
         if drone.status == DroneStatus.EN_ROUTE:
             incident = world.incidents[drone.target_incident_id]
             arrived = _move_one_cell(drone, (incident.x, incident.y))
@@ -76,7 +81,7 @@ def advance_world(world, battery_drain_per_move=0.5):
                 0.0, drone.battery_pct - battery_drain_per_move
             )
 
-            if drone.battery_pct == 0:
+            if drone.battery_pct <= 0:
                 drone.status = DroneStatus.DISABLED
                 drone.target_incident_id = None
                 _record(world, "drone_disabled", drone.drone_id,
@@ -86,6 +91,38 @@ def advance_world(world, battery_drain_per_move=0.5):
                 _record(world, "drone_arrived", drone.drone_id,
                         f"{drone.drone_id} arrived at {incident.incident_id}")
 
+        elif drone.status == DroneStatus.SUPPRESSING:
+            incident = world.incidents[drone.target_incident_id]
+
+            if drone.water_pct <= 0:
+                request_return_to_base(world, drone.drone_id)
+                continue
+
+            incident.suppression_progress = min(
+                100.0,
+                incident.suppression_progress + 25.0 / incident.severity,
+            )
+            drone.water_pct = max(0.0, drone.water_pct - 5.0)
+            drone.battery_pct = max(0.0, drone.battery_pct - 0.25)
+
+            if incident.suppression_progress >= 100.0:
+                extinguish_incident(world, incident.incident_id)
+                drone.status = DroneStatus.IDLE
+                drone.target_incident_id = None
+                _record(
+                    world, "suppression_complete", drone.drone_id,
+                    f"{drone.drone_id} extinguished {incident.incident_id}",
+                )
+            elif drone.battery_pct <= 0:
+                drone.status = DroneStatus.DISABLED
+                drone.target_incident_id = None
+                _record(
+                    world, "drone_disabled", drone.drone_id,
+                    f"{drone.drone_id} battery depleted while suppressing",
+                )
+            elif drone.water_pct <= 0:
+                request_return_to_base(world, drone.drone_id)
+    
         elif drone.status == DroneStatus.RETURNING:
             arrived = _move_one_cell(drone, world.base_position)
 
