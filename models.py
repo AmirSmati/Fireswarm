@@ -47,3 +47,12 @@ class WorldState:
     drones: dict[str, Drone] = field(default_factory=dict)
     incidents: dict[str, Incident] = field(default_factory=dict)
     event_log: list[str] = field(default_factory=list)
+    events: list[WorldEvent] = field(default_factory=list)
+
+@dataclass
+class WorldEvent : 
+    event_type: str
+    tick : int
+    entity_id : str
+    message : str
+    severity : int =1
