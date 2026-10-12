@@ -26,7 +26,14 @@ class Drone:
     status: DroneStatus = DroneStatus.IDLE
     target_incident_id: str | None = None
 
-
+@dataclass
+class WorldEvent:
+    event_type: str
+    tick: int
+    entity_id: str
+    message: str
+    severity: int = 1
+    
 @dataclass
 class Incident:
     incident_id: str
@@ -49,10 +56,3 @@ class WorldState:
     event_log: list[str] = field(default_factory=list)
     events: list[WorldEvent] = field(default_factory=list)
 
-@dataclass
-class WorldEvent : 
-    event_type: str
-    tick : int
-    entity_id : str
-    message : str
-    severity : int =1
