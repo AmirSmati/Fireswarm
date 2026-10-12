@@ -97,5 +97,5 @@ def test_drone_can_extinguish_fire():
         advance_world(world)
 
     assert fire.status == IncidentStatus.EXTINGUISHED
-    assert drone.status == DroneStatus.IDLE
+    assert drone.status == DroneStatus.RETURNING
     assert drone.target_incident_id is None

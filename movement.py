@@ -107,12 +107,11 @@ def advance_world(world, battery_drain_per_move=0.5):
 
             if incident.suppression_progress >= 100.0:
                 extinguish_incident(world, incident.incident_id)
-                drone.status = DroneStatus.IDLE
-                drone.target_incident_id = None
                 _record(
                     world, "suppression_complete", drone.drone_id,
                     f"{drone.drone_id} extinguished {incident.incident_id}",
                 )
+                request_return_to_base(world, drone.drone_id)
             elif drone.battery_pct <= 0:
                 drone.status = DroneStatus.DISABLED
                 drone.target_incident_id = None
