@@ -8,6 +8,7 @@ class DroneStatus(str, Enum):
     SUPPRESSING = "suppressing"
     RETURNING = "returning"
     REFILLING = "refilling"
+    DISABLED = "disabled"
 
 
 class IncidentStatus(str, Enum):
@@ -33,7 +34,7 @@ class WorldEvent:
     entity_id: str
     message: str
     severity: int = 1
-    
+
 @dataclass
 class Incident:
     incident_id: str
