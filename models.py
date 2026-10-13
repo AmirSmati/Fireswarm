@@ -22,8 +22,8 @@ class Drone:
     drone_id: str
     x: int
     y: int
-    battery_pct: float = 100.0
-    water_pct: float = 100.0
+    battery_pct: float = 200.0
+    water_pct: float = 200.0
     status: DroneStatus = DroneStatus.IDLE
     target_incident_id: str | None = None
 

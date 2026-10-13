@@ -14,6 +14,7 @@ def assign_available_drones(
     world: WorldState,
     min_battery: float = 15.0,
     min_water: float = 20.0,
+    policy: str = "severity_first",
 ) -> dict[str, str]:
     """
     Baseline dispatcher:
@@ -34,19 +35,34 @@ def assign_available_drones(
         }
     }
 
-    incidents = sorted(
-        (
-            incident
-            for incident in world.incidents.values()
-            if incident.status == IncidentStatus.ACTIVE
-            and incident.incident_id not in claimed_incident_ids
-        ),
-        key=lambda incident: (
-            -incident.severity,
-            incident.created_tick,
-            incident.incident_id,
-        ),
-    )
+    
+    if policy not in {"severity_first", "oldest_first"}:
+        raise ValueError(f"Unknown dispatch policy: {policy}")
+
+    incidents = [
+        incident
+        for incident in world.incidents.values()
+        if incident.status == IncidentStatus.ACTIVE
+        and incident.incident_id not in claimed_incident_ids
+    ]
+
+    if policy == "severity_first":
+        incidents.sort(
+            key=lambda incident: (
+                -incident.severity,
+                incident.created_tick,
+                incident.incident_id,
+            )
+        )
+    else:  # oldest_first
+        incidents.sort(
+            key=lambda incident: (
+                incident.created_tick,
+                -incident.severity,
+                incident.incident_id,
+            )
+        )
+
 
     available = [
         drone
@@ -79,3 +95,4 @@ def assign_available_drones(
         available.remove(drone)
 
     return assignments
+
