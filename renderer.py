@@ -32,16 +32,13 @@ def grid_size(world):
 
 
 def base_position(world):
-    if hasattr(world, "base_x") and hasattr(world, "base_y"):
-        return world.base_x, world.base_y
-
-    base = getattr(world, "base", None)
+    base = getattr(world, "base_position", None)
 
     if isinstance(base, (tuple, list)) and len(base) >= 2:
         return base[0], base[1]
 
-    if base is not None and hasattr(base, "x") and hasattr(base, "y"):
-        return base.x, base.y
+    if hasattr(world, "base_x") and hasattr(world, "base_y"):
+        return world.base_x, world.base_y
 
     return 0, 0
 
@@ -79,13 +76,25 @@ class Renderer:
         )
         self.screen.blit(image, (x, y))
 
-    def draw(self, world):
+    def draw(self, world, on_grid_click=None):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_q):
                     return False
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_x, mouse_y = event.pos
+
+                inside_grid = (
+                    self.board_left <= mouse_x < self.board_left + self.width * self.cell
+                    and self.board_top <= mouse_y < self.board_top + self.height * self.cell
+                )
+
+                if inside_grid and on_grid_click is not None:
+                    grid_x = (mouse_x - self.board_left) // self.cell
+                    grid_y = (mouse_y - self.board_top) // self.cell
+                    on_grid_click(int(grid_x), int(grid_y))
 
         self.screen.fill(BACKGROUND)
         self.draw_text("FIREWATCH SWARM", MARGIN, 16, self.title_font)
