@@ -47,6 +47,8 @@ class Renderer:
     def __init__(self, world):
         pygame.init()
 
+        self.selected_severity = 1
+        
         self.cell = CELL
         self.width, self.height = grid_size(world)
 
@@ -56,7 +58,7 @@ class Renderer:
         self.board_left = MARGIN
         self.board_top = 60
         self.panel_left = self.board_left + board_width + 30
-
+        
         self.screen = pygame.display.set_mode(
             (
                 self.panel_left + PANEL_WIDTH,
@@ -77,28 +79,47 @@ class Renderer:
         self.screen.blit(image, (x, y))
 
     def draw(self, world, on_grid_click=None):
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_q):
                     return False
+
+                # Press 1-5 to select the next fire's severity.
+                if pygame.K_1 <= event.key <= pygame.K_5:
+                    self.selected_severity = event.key - pygame.K_0
+
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_x, mouse_y = event.pos
 
                 inside_grid = (
-                    self.board_left <= mouse_x < self.board_left + self.width * self.cell
-                    and self.board_top <= mouse_y < self.board_top + self.height * self.cell
+                    self.board_left <= mouse_x
+                    < self.board_left + self.width * self.cell
+                    and self.board_top <= mouse_y
+                    < self.board_top + self.height * self.cell
                 )
 
                 if inside_grid and on_grid_click is not None:
                     grid_x = (mouse_x - self.board_left) // self.cell
                     grid_y = (mouse_y - self.board_top) // self.cell
-                    on_grid_click(int(grid_x), int(grid_y))
+
+                    on_grid_click(
+                        int(grid_x),
+                        int(grid_y),
+                        self.selected_severity,
+                    )
 
         self.screen.fill(BACKGROUND)
         self.draw_text("FIREWATCH SWARM", MARGIN, 16, self.title_font)
-
+        self.draw_text(
+            f"New fire severity: {self.selected_severity} (press 1-5)",
+            self.panel_left,
+            25,
+            self.font,
+        )
         # Grid
         for x in range(self.width + 1):
             px = self.board_left + x * self.cell

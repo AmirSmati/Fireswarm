@@ -68,3 +68,62 @@ def choose_dispatch_policy(state: str) -> tuple[str, float]:
     )
 
     return selected_policy, confidence
+
+# Rerouting 
+def choose_reroute_decision(
+    state: str,
+    incident_id: str,
+) -> tuple[str, float]:
+    reroute_option = f"reroute_to_{incident_id}"
+
+    payload = {
+        "state": state,
+        "questions": {
+            "reroute_decision": {
+                "type": "choice",
+                "instructions": (
+                    "Decide whether an en-route drone should keep "
+                    "its current target or reroute to a new fire. "
+                    "Consider the severity difference, drone resources, "
+                    "and both fire locations."
+                ),
+                "criteria": {
+                    "keep_current": (
+                        "Keep the current target if changing course "
+                        "is not sufficiently justified."
+                    ),
+                    reroute_option: (
+                        "Reroute to the new fire because its higher "
+                        "severity justifies reconsidering the assignment."
+                    ),
+                },
+            }
+        },
+    }
+
+    request = Request(
+        DECIDER_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=20) as response:
+        result = json.loads(response.read().decode("utf-8"))
+
+    answer = result["answers"]["reroute_decision"]
+    choice = answer["choice"]
+    confidence = float(answer["confidence"])
+
+    if choice not in {"keep_current", reroute_option}:
+        raise ValueError(f"Unexpected rerouting choice: {choice!r}")
+
+    if confidence < MIN_CONFIDENCE:
+        choice = "keep_current"
+
+    print(
+        f"[Decider] Rerouting decision={choice}; "
+        f"confidence={confidence:.3f}"
+    )
+
+    return choice, confidence
