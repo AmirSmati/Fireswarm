@@ -8,6 +8,14 @@ FALLBACK_POLICY = "severity_first"
 MIN_CONFIDENCE = 0.20
 
 
+RESPONSE_CATEGORIES = {
+    "routine_dispatch",
+    "critical_reroute",
+    "maintain_assignments",
+    "resource_recovery",
+}
+
+
 def choose_dispatch_policy(state: str) -> tuple[str, float]:
     payload = {
         "state": state,
@@ -127,3 +135,69 @@ def choose_reroute_decision(
     )
 
     return choice, confidence
+
+def classify_response_policy(state: str) -> tuple[str, float]:
+    """Classify an incident event before the coordinator acts."""
+
+    payload = {
+        "state": state,
+        "questions": {
+            "response_category": {
+                "type": "choice",
+                "instructions": (
+                    "Classify the incoming fire-response situation "
+                    "into exactly one response category. Use the "
+                    "incident, drone assignments, and resource facts. "
+                    "Do not invent information. The coordinator will "
+                    "validate and execute the chosen response."
+                ),   
+                "criteria": {
+                    "routine_dispatch": (
+                        "Choose ONLY when an active fire needs an initial assignment "
+                        "and no currently assigned drone needs to be interrupted. "
+                        "This is for routine fires when existing assignments can remain "
+                        "unchanged."
+                    ),
+                    "critical_reroute": (
+                        "Choose when a new or escalated fire has severity 4 or 5, "
+                        "at least one drone is travelling to a lower-severity fire, "
+                        "and no idle drone is available to handle the critical fire. "
+                        "Reconsider redirecting an en-route drone."
+                    ),
+                    "maintain_assignments": (
+                        "Choose when no new meaningful incident requires action, "
+                        "no critical incident requires reconsideration, and current "
+                        "assignments should remain unchanged."
+                    ),
+                    "resource_recovery": (
+                        "Choose when a drone has insufficient battery or water to "
+                        "continue its current mission and should return to base."
+                    ),
+                },
+            }
+        },
+    }
+
+    request = Request(
+        DECIDER_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=20) as response:
+        result = json.loads(response.read().decode("utf-8"))
+
+    answer = result["answers"]["response_category"]
+    category = answer["choice"]
+    confidence = float(answer["confidence"])
+
+    if category not in RESPONSE_CATEGORIES:
+        raise ValueError(f"Unexpected response category: {category!r}")
+
+    print(
+        f"[Decider] Response category={category}; "
+        f"confidence={confidence:.3f}"
+    )
+
+    return category, confidence
