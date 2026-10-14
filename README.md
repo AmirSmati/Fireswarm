@@ -189,7 +189,3 @@ Before enabling it, verify account/model access and permissions, test the module
 ## Hackathon context
 
 This project is being developed for the [AWS Builder Center Agent Experience Hackathon: Strands Decider](https://builder.aws.com/build/hackathons/4f50957c-1d08-37ab-b11c-97516b9adeb4/agent-experience-hackathon). The current intended decision-pattern tag is `#policy`, alongside the required `#strands-decider-2b` tag. Check the official page for the latest requirements and submission dates.
-
-## License
-
-No project license has been selected in this draft. Add an approved open-source license before making the repository public or submitting it to the hackathon. Until a license is added, others should not assume they have permission to reuse the project source.
