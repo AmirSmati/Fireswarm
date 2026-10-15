@@ -12,3 +12,5 @@ checkpoints/
 *.safetensors
 *.pt
 *.pth
+.evaluation_results
+.evaluation_suite_results

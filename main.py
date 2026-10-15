@@ -55,20 +55,23 @@ def record_assignment_events(world, assignments, source: str) -> None:
         )
 
 
-def reconsider_assignments(world, new_fire) -> None:
-    """Ask Decider whether an eligible en-route drone should be rerouted."""
+
+def grid_distance(start, target):
+    """Manhattan distance between two grid positions."""
+    return abs(start[0] - target[0]) + abs(start[1] - target[1])
+
+
+def reconsider_assignments(world, new_fire):
+    """Evaluate en-route drones, prioritizing those closest to the new fire."""
+
     if not can_reroute_to(world, new_fire):
         return
 
+    candidates = []
+
+    # Gather ALL eligible drones before selecting one.
     for drone in world.drones.values():
         if drone.status != DroneStatus.EN_ROUTE:
-            continue
-
-        current_fire = world.incidents.get(drone.target_incident_id)
-        if current_fire is None or current_fire.status != IncidentStatus.ACTIVE:
-            continue
-
-        if new_fire.severity <= current_fire.severity:
             continue
 
         if (
@@ -77,18 +80,93 @@ def reconsider_assignments(world, new_fire) -> None:
         ):
             continue
 
+        current_fire = world.incidents.get(drone.target_incident_id)
+
+        if current_fire is None:
+            continue
+
+        if current_fire.status != IncidentStatus.ACTIVE:
+            continue
+
+        # Only interrupt a less-severe assignment.
+        if new_fire.severity <= current_fire.severity:
+            continue
+
+        current_position = (drone.x, drone.y)
+
+        distance_to_new = grid_distance(
+            current_position,
+            (new_fire.x, new_fire.y),
+        )
+
+        distance_to_current = grid_distance(
+            current_position,
+            (current_fire.x, current_fire.y),
+        )
+
+        candidates.append({
+            "drone": drone,
+            "current_fire": current_fire,
+            "distance_to_new": distance_to_new,
+            "distance_to_current": distance_to_current,
+            "severity_gain": new_fire.severity - current_fire.severity,
+        })
+
+    if not candidates:
+        print(
+            f"[Dispatcher] No eligible drone to reroute to "
+            f"{new_fire.incident_id}."
+        )
+        return
+
+    # Location is the primary criterion: closest to the new fire first.
+    # Use severity gain and drone ID only to break ties.
+    candidates.sort(
+        key=lambda candidate: (
+            candidate["distance_to_new"],
+            -candidate["severity_gain"],
+            candidate["drone"].drone_id,
+        )
+    )
+
+    print(
+        f"[Dispatcher] Reroute candidates for {new_fire.incident_id}:"
+    )
+
+    for candidate in candidates:
+        drone = candidate["drone"]
+        current_fire = candidate["current_fire"]
+
+        print(
+            f"  {drone.drone_id}: current=({drone.x}, {drone.y}), "
+            f"distance_to_new={candidate['distance_to_new']}, "
+            f"distance_to_current={candidate['distance_to_current']}, "
+            f"current_target={current_fire.incident_id}"
+        )
+
+    # Ask Decider in nearest-first order.
+    for candidate in candidates:
+        drone = candidate["drone"]
+        current_fire = candidate["current_fire"]
+
         state = (
-            f"Drone: {drone.drone_id}\n"
-            f"Drone position: ({drone.x}, {drone.y})\n"
-            f"Battery: {drone.battery_pct:.1f}%\n"
-            f"Water: {drone.water_pct:.1f}%\n"
-            f"Current target: {current_fire.incident_id}\n"
-            f"Current target severity: {current_fire.severity}\n"
-            f"Current target position: ({current_fire.x}, {current_fire.y})\n"
-            f"New fire: {new_fire.incident_id}\n"
+            f"New critical fire: {new_fire.incident_id}\n"
             f"New fire severity: {new_fire.severity}\n"
             f"New fire position: ({new_fire.x}, {new_fire.y})\n"
-            "Choose whether to keep the current target or reroute to the new fire."
+            f"Drone under consideration: {drone.drone_id}\n"
+            f"Drone current position: ({drone.x}, {drone.y})\n"
+            f"Manhattan distance from current position to new fire: "
+            f"{candidate['distance_to_new']} grid steps\n"
+            f"Current target: {current_fire.incident_id}\n"
+            f"Current target severity: {current_fire.severity}\n"
+            f"Current target position: "
+            f"({current_fire.x}, {current_fire.y})\n"
+            f"Distance from drone to current target: "
+            f"{candidate['distance_to_current']} grid steps\n"
+            f"Battery: {drone.battery_pct:.1f}%\n"
+            f"Water: {drone.water_pct:.1f}%\n"
+            "This candidate was selected based on its current position. "
+            "Decide whether to reroute this drone or keep its assignment."
         )
 
         try:
@@ -97,39 +175,43 @@ def reconsider_assignments(world, new_fire) -> None:
                 new_fire.incident_id,
             )
         except Exception as exc:
-            message = (
-                f"Rerouting request failed for {drone.drone_id}: {exc}; "
-                "kept current assignment"
-            )
-            print(f"[Decider] {message}")
-            record_world_event(
-                world, "reroute_request_failed", drone.drone_id,
-                message, new_fire.severity,
+            print(
+                f"[Decider] Request failed for {drone.drone_id}: {exc}"
             )
             continue
 
-        decision_message = (
-            f"{drone.drone_id}: decision={decision}; "
-            f"confidence={confidence:.3f}; target={new_fire.incident_id}"
+        print(
+            f"[Decider] Candidate={drone.drone_id}; "
+            f"decision={decision}; confidence={confidence:.3f}"
         )
-        print(f"[Decider] {decision_message}")
+
         record_world_event(
             world,
             event_type="reroute_decision",
             entity_id=drone.drone_id,
-            message=decision_message,
+            message=(
+                f"Decision={decision}; confidence={confidence:.3f}; "
+                f"distance_to_new={candidate['distance_to_new']}; "
+                f"target={new_fire.incident_id}"
+            ),
             severity=new_fire.severity,
         )
 
         if decision != f"reroute_to_{new_fire.incident_id}":
+            # This drone stays on its current assignment.
             continue
 
         previous_target = drone.target_incident_id
+
+        # Keep EN_ROUTE status; movement uses the new target next tick.
         drone.target_incident_id = new_fire.incident_id
+
         message = (
             f"{drone.drone_id} rerouted from {previous_target} "
-            f"to {new_fire.incident_id}"
+            f"to {new_fire.incident_id}; "
+            f"distance_to_new={candidate['distance_to_new']}"
         )
+
         record_world_event(
             world,
             event_type="drone_rerouted",
@@ -137,9 +219,8 @@ def reconsider_assignments(world, new_fire) -> None:
             message=message,
             severity=new_fire.severity,
         )
-        print(f"[Dispatcher] {message}")
 
-        # One drone responds to this incident in this first version.
+        print(f"[Dispatcher] {message}")
         break
 
 
