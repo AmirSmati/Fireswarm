@@ -430,6 +430,16 @@ def can_reroute_to(world, incident) -> bool:
     """Return whether at least one eligible en-route drone can be redirected."""
     if incident.status != IncidentStatus.ACTIVE:
         return False
+
+    if incident.severity < 4:
+        return False
+
+    # Prefer a ready idle drone over interrupting a mission.
+    if has_available_drone(world):
+        return False
+    
+    if incident.status != IncidentStatus.ACTIVE:
+        return False
     if incident.severity < CRITICAL_SEVERITY:
         return False
 
