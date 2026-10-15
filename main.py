@@ -12,6 +12,7 @@ from movement import advance_world
 from renderer import Renderer
 from simulation import create_initial_world
 
+from mission_feasibility import can_complete_mission
 
 TICK_INTERVAL_MS = 1000
 MIN_BATTERY_PCT = 15.0
@@ -61,55 +62,79 @@ def grid_distance(start, target):
     return abs(start[0] - target[0]) + abs(start[1] - target[1])
 
 
-def reconsider_assignments(world, new_fire):
-    """Evaluate en-route drones, prioritizing those closest to the new fire."""
 
+def reconsider_assignments(world, new_fire):
     if not can_reroute_to(world, new_fire):
         return
 
     candidates = []
 
-    # Gather ALL eligible drones before selecting one.
     for drone in world.drones.values():
-        if drone.status != DroneStatus.EN_ROUTE:
+        if drone.status not in {
+            DroneStatus.EN_ROUTE,
+            DroneStatus.RETURNING,
+        }:
             continue
 
-        if (
-            drone.battery_pct < MIN_BATTERY_PCT
-            or drone.water_pct < MIN_WATER_PCT
-        ):
+        try:
+            feasible = can_complete_mission(world, drone, new_fire)
+        except (ValueError, RuntimeError) as exc:
+            print(
+                f"[Dispatcher] Mission estimate failed for "
+                f"{drone.drone_id}: {exc}"
+            )
             continue
 
-        current_fire = world.incidents.get(drone.target_incident_id)
-
-        if current_fire is None:
+        if not feasible:
+            print(
+                f"[Dispatcher] Skipping {drone.drone_id}: "
+                f"insufficient resources for {new_fire.incident_id}"
+            )
             continue
-
-        if current_fire.status != IncidentStatus.ACTIVE:
-            continue
-
-        # Only interrupt a less-severe assignment.
-        if new_fire.severity <= current_fire.severity:
-            continue
-
-        current_position = (drone.x, drone.y)
 
         distance_to_new = grid_distance(
-            current_position,
+            (drone.x, drone.y),
             (new_fire.x, new_fire.y),
         )
 
-        distance_to_current = grid_distance(
-            current_position,
-            (current_fire.x, current_fire.y),
-        )
+        if drone.status == DroneStatus.RETURNING:
+            # The drone is heading home, not serving a fire.
+            current_fire = None
+            current_target = "base"
+            distance_to_current = grid_distance(
+                (drone.x, drone.y),
+                world.base_position,
+            )
+            severity_gain = new_fire.severity
+
+        else:
+            current_fire = world.incidents.get(
+                drone.target_incident_id
+            )
+
+            if current_fire is None:
+                continue
+
+            if current_fire.status != IncidentStatus.ACTIVE:
+                continue
+
+            if new_fire.severity <= current_fire.severity:
+                continue
+
+            current_target = current_fire.incident_id
+            distance_to_current = grid_distance(
+                (drone.x, drone.y),
+                (current_fire.x, current_fire.y),
+            )
+            severity_gain = new_fire.severity - current_fire.severity
 
         candidates.append({
             "drone": drone,
             "current_fire": current_fire,
+            "current_target": current_target,
             "distance_to_new": distance_to_new,
             "distance_to_current": distance_to_current,
-            "severity_gain": new_fire.severity - current_fire.severity,
+            "severity_gain": severity_gain,
         })
 
     if not candidates:
@@ -119,54 +144,45 @@ def reconsider_assignments(world, new_fire):
         )
         return
 
-    # Location is the primary criterion: closest to the new fire first.
-    # Use severity gain and drone ID only to break ties.
+    # Closest by current position first. On a tie, prefer a returning
+    # drone so we don't interrupt another active fire assignment.
     candidates.sort(
-        key=lambda candidate: (
-            candidate["distance_to_new"],
-            -candidate["severity_gain"],
-            candidate["drone"].drone_id,
+        key=lambda c: (
+            c["distance_to_new"],
+            0 if c["drone"].status == DroneStatus.RETURNING else 1,
+            -c["severity_gain"],
+            c["drone"].drone_id,
         )
-    )
-
-    print(
-        f"[Dispatcher] Reroute candidates for {new_fire.incident_id}:"
     )
 
     for candidate in candidates:
         drone = candidate["drone"]
         current_fire = candidate["current_fire"]
 
-        print(
-            f"  {drone.drone_id}: current=({drone.x}, {drone.y}), "
-            f"distance_to_new={candidate['distance_to_new']}, "
-            f"distance_to_current={candidate['distance_to_current']}, "
-            f"current_target={current_fire.incident_id}"
+        current_details = (
+            f"Current target: {current_fire.incident_id}, "
+            f"severity {current_fire.severity}, "
+            f"position ({current_fire.x}, {current_fire.y})"
+            if current_fire is not None
+            else f"Current route: returning to base at "
+                 f"{world.base_position}"
         )
-
-    # Ask Decider in nearest-first order.
-    for candidate in candidates:
-        drone = candidate["drone"]
-        current_fire = candidate["current_fire"]
 
         state = (
             f"New critical fire: {new_fire.incident_id}\n"
             f"New fire severity: {new_fire.severity}\n"
             f"New fire position: ({new_fire.x}, {new_fire.y})\n"
-            f"Drone under consideration: {drone.drone_id}\n"
-            f"Drone current position: ({drone.x}, {drone.y})\n"
-            f"Manhattan distance from current position to new fire: "
-            f"{candidate['distance_to_new']} grid steps\n"
-            f"Current target: {current_fire.incident_id}\n"
-            f"Current target severity: {current_fire.severity}\n"
-            f"Current target position: "
-            f"({current_fire.x}, {current_fire.y})\n"
-            f"Distance from drone to current target: "
-            f"{candidate['distance_to_current']} grid steps\n"
+            f"Drone: {drone.drone_id}\n"
+            f"Drone status: {drone.status.value}\n"
+            f"Current position: ({drone.x}, {drone.y})\n"
+            f"Distance to new fire: {candidate['distance_to_new']}\n"
+            f"Distance to current destination: "
+            f"{candidate['distance_to_current']}\n"
+            f"{current_details}\n"
             f"Battery: {drone.battery_pct:.1f}%\n"
             f"Water: {drone.water_pct:.1f}%\n"
-            "This candidate was selected based on its current position. "
-            "Decide whether to reroute this drone or keep its assignment."
+            "Choose whether to keep the current route or redirect "
+            "to the new critical fire."
         )
 
         try:
@@ -176,7 +192,8 @@ def reconsider_assignments(world, new_fire):
             )
         except Exception as exc:
             print(
-                f"[Decider] Request failed for {drone.drone_id}: {exc}"
+                f"[Decider] Request failed for {drone.drone_id}: "
+                f"{exc}"
             )
             continue
 
@@ -185,39 +202,54 @@ def reconsider_assignments(world, new_fire):
             f"decision={decision}; confidence={confidence:.3f}"
         )
 
-        record_world_event(
-            world,
-            event_type="reroute_decision",
-            entity_id=drone.drone_id,
-            message=(
-                f"Decision={decision}; confidence={confidence:.3f}; "
-                f"distance_to_new={candidate['distance_to_new']}; "
-                f"target={new_fire.incident_id}"
-            ),
-            severity=new_fire.severity,
+        decision_message = (
+            f"Candidate={drone.drone_id}; decision={decision}; "
+            f"confidence={confidence:.3f}; "
+            f"distance_to_new={candidate['distance_to_new']}"
+        )
+
+        world.events.append(
+            WorldEvent(
+                event_type="reroute_decision",
+                tick=world.tick,
+                entity_id=drone.drone_id,
+                message=decision_message,
+                severity=new_fire.severity,
+            )
+        )
+        world.event_log.append(
+            f"[tick {world.tick}] {decision_message}"
         )
 
         if decision != f"reroute_to_{new_fire.incident_id}":
-            # This drone stays on its current assignment.
             continue
 
-        previous_target = drone.target_incident_id
+        previous_route = (
+            "base (returning)"
+            if drone.status == DroneStatus.RETURNING
+            else drone.target_incident_id
+        )
 
-        # Keep EN_ROUTE status; movement uses the new target next tick.
         drone.target_incident_id = new_fire.incident_id
+        drone.status = DroneStatus.EN_ROUTE
 
         message = (
-            f"{drone.drone_id} rerouted from {previous_target} "
+            f"{drone.drone_id} rerouted from {previous_route} "
             f"to {new_fire.incident_id}; "
             f"distance_to_new={candidate['distance_to_new']}"
         )
 
-        record_world_event(
-            world,
-            event_type="drone_rerouted",
-            entity_id=drone.drone_id,
-            message=message,
-            severity=new_fire.severity,
+        world.events.append(
+            WorldEvent(
+                event_type="drone_rerouted",
+                tick=world.tick,
+                entity_id=drone.drone_id,
+                message=message,
+                severity=new_fire.severity,
+            )
+        )
+        world.event_log.append(
+            f"[tick {world.tick}] {message}"
         )
 
         print(f"[Dispatcher] {message}")
@@ -411,6 +443,19 @@ def has_available_drone(world) -> bool:
         for drone in world.drones.values()
     )
 
+def has_feasible_idle_drone(world, incident):
+    """Is any idle drone capable of completing this specific mission?"""
+    for drone in world.drones.values():
+        if drone.status != DroneStatus.IDLE:
+            continue
+
+        try:
+            if can_complete_mission(world, drone, incident):
+                return True
+        except (ValueError, RuntimeError):
+            continue
+
+    return False
 
 def has_low_resource_drone(world) -> bool:
     return any(
@@ -426,24 +471,21 @@ def has_low_resource_drone(world) -> bool:
     )
 
 
-def can_reroute_to(world, incident) -> bool:
-    """Return whether at least one eligible en-route drone can be redirected."""
+
+
+def can_reroute_to(world, incident):
     if incident.status != IncidentStatus.ACTIVE:
         return False
 
-    if incident.severity < 4:
+    # Preserve your current policy: rerouting is for severity >= 2.
+    if incident.severity < 2:
         return False
 
-    # Prefer a ready idle drone over interrupting a mission.
-    if has_available_drone(world):
-        return False
-    
-    if incident.status != IncidentStatus.ACTIVE:
-        return False
-    if incident.severity < CRITICAL_SEVERITY:
+    # Prefer an idle drone only when it can complete this mission.
+    if has_feasible_idle_drone(world, incident):
         return False
 
-    # Do not send another drone to an incident that already has an assigned drone.
+    # Never send a second drone to an already-claimed incident.
     if any(
         drone.target_incident_id == incident.incident_id
         and drone.status in {
@@ -455,22 +497,41 @@ def can_reroute_to(world, incident) -> bool:
         return False
 
     for drone in world.drones.values():
-        if drone.status != DroneStatus.EN_ROUTE:
-            continue
-        if (
-            drone.battery_pct < MIN_BATTERY_PCT
-            or drone.water_pct < MIN_WATER_PCT
-        ):
+        if drone.status not in {
+            DroneStatus.EN_ROUTE,
+            DroneStatus.RETURNING,
+        }:
             continue
 
-        current_fire = world.incidents.get(drone.target_incident_id)
-        if current_fire is None or current_fire.status != IncidentStatus.ACTIVE:
+        # Check the full mission from this drone's current position.
+        try:
+            if not can_complete_mission(world, drone, incident):
+                continue
+        except (ValueError, RuntimeError) as exc:
+            print(
+                f"[Dispatcher] Cannot estimate mission for "
+                f"{drone.drone_id}: {exc}"
+            )
             continue
+
+        # A returning drone has no active fire assignment to abandon.
+        if drone.status == DroneStatus.RETURNING:
+            return True
+
+        current_fire = world.incidents.get(
+            drone.target_incident_id
+        )
+
+        if current_fire is None:
+            continue
+
+        if current_fire.status != IncidentStatus.ACTIVE:
+            continue
+
         if incident.severity > current_fire.severity:
             return True
 
     return False
-
 
 def fallback_response_category(world, incident) -> str:
     """Choose a feasible fallback category without model inference."""
@@ -478,7 +539,7 @@ def fallback_response_category(world, incident) -> str:
         return "critical_reroute"
     if has_low_resource_drone(world):
         return "resource_recovery"
-    if has_available_drone(world):
+    if has_feasible_idle_drone(world, incident):
         return "routine_dispatch"
     return "maintain_assignments"
 

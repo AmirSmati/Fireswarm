@@ -155,3 +155,49 @@ def test_idle_drone_is_preferred_over_rerouting(monkeypatch):
     assert travelling_drone.target_incident_id == "old_fire"
     assert idle_drone.target_incident_id == new_fire.incident_id
     assert idle_drone.status == DroneStatus.EN_ROUTE
+
+
+def test_returning_drone_can_be_redirected(monkeypatch):
+    world, drone, new_fire = make_test_world()
+
+    drone.status = DroneStatus.RETURNING
+    drone.target_incident_id = None
+    drone.battery_pct = 80.0
+    drone.water_pct = 80.0
+
+    monkeypatch.setattr(
+        main,
+        "choose_reroute_decision",
+        lambda state, incident_id: (
+            f"reroute_to_{incident_id}", 0.95
+        ),
+    )
+
+    main.reconsider_assignments(world, new_fire)
+
+    assert drone.status == DroneStatus.EN_ROUTE
+    assert drone.target_incident_id == new_fire.incident_id
+
+
+def test_returning_drone_with_low_resources_is_not_redirected(
+    monkeypatch,
+):
+    world, drone, new_fire = make_test_world()
+
+    drone.status = DroneStatus.RETURNING
+    drone.target_incident_id = None
+    drone.battery_pct = 10.0
+    drone.water_pct = 80.0
+
+    monkeypatch.setattr(
+        main,
+        "choose_reroute_decision",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("Decider should not be called")
+        ),
+    )
+
+    main.reconsider_assignments(world, new_fire)
+
+    assert drone.status == DroneStatus.RETURNING
+    assert drone.target_incident_id is None

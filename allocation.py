@@ -3,7 +3,8 @@ from models import (
     IncidentStatus,
     WorldState,
 )
-
+# feasabiility 
+from mission_feasibility import can_complete_mission
 
 def distance(a: tuple[int, int], b: tuple[int, int]) -> int:
     """Manhattan distance on our grid."""
@@ -17,14 +18,16 @@ def assign_available_drones(
     policy: str = "severity_first",
 ) -> dict[str, str]:
     """
-    Baseline dispatcher:
-    - Prioritize more severe fires.
-    - Assign the nearest available drone.
-    - Avoid assigning one drone to multiple fires.
-    - Exclude drones with insufficient resources.
+     Assign idle drones only when they have enough resources to complete
+    the estimated mission and return to base.
+
+    Optional min_battery and min_water parameters are additional
+    thresholds for callers that explicitly want them. By default,
+    mission feasibility determines whether resources are sufficient.
 
     Returns {incident_id: drone_id}.
     """
+    
     claimed_incident_ids = {
         drone.target_incident_id
         for drone in world.drones.values()
@@ -75,13 +78,25 @@ def assign_available_drones(
     assignments: dict[str, str] = {}
 
     for incident in incidents:
-        if not available:
-            break
+        # Resource feasibility depends on this specific fire and the
+        # drone's current position, so filter candidates per incident.
+        feasible = [
+            drone
+            for drone in available
+            if can_complete_mission(world, drone, incident)
+        ]
+
+        if not feasible:
+            print(
+                f"[Dispatcher] No feasible idle drone for "
+                f"{incident.incident_id} (severity {incident.severity})."
+            )
+            continue
 
         target = (incident.x, incident.y)
 
         drone = min(
-            available,
+            feasible,
             key=lambda d: (
                 distance((d.x, d.y), target),
                 d.drone_id,
