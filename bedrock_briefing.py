@@ -9,7 +9,7 @@ MODEL_ID = "eu.amazon.nova-micro-v1:0"
 def generate_incident_briefing(
     drone_id: str,
     current_fire_id: str,
-    current_severity: int,
+    current_severity: int | None,
     new_fire_id: str,
     new_severity: int,
     decision: str,
@@ -20,13 +20,22 @@ def generate_incident_briefing(
         "bedrock-runtime",
         region_name=REGION,
     )
-
+    if current_severity is None:
+        current_target_fact = (
+            f"- Previous route: {current_fire_id}; "
+            "the drone was returning to base"
+        )
+    else:
+        current_target_fact = (
+            f"- Current target: {current_fire_id}, "
+            f"severity {current_severity}"
+        )
     prompt = f"""
         You are the briefing component of a simulated fire-response system.
 
         Facts:
         - Drone: {drone_id}
-        - Current target: {current_fire_id}, severity {current_severity}
+        - {current_target_fact}
         - New fire: {new_fire_id}, severity {new_severity}
         - Decision from the decision system: {decision}
 
