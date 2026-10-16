@@ -14,6 +14,8 @@ from simulation import create_initial_world
 
 from mission_feasibility import can_complete_mission
 
+from bedrock_briefing import generate_incident_briefing
+
 TICK_INTERVAL_MS = 1000
 MIN_BATTERY_PCT = 15.0
 MIN_WATER_PCT = 20.0
@@ -253,6 +255,41 @@ def reconsider_assignments(world, new_fire):
         )
 
         print(f"[Dispatcher] {message}")
+        
+        # Generate an explanation only after a reroute succeeds.
+        try:
+            briefing = generate_incident_briefing(
+                drone_id=drone.drone_id,
+                current_fire_id=candidate["current_target"],
+                current_severity=(
+                    current_fire.severity
+                    if current_fire is not None
+                    else None
+                ),
+                new_fire_id=new_fire.incident_id,
+                new_severity=new_fire.severity,
+                decision=f"reroute_to_{new_fire.incident_id}",
+            )
+
+            briefing_event = WorldEvent(
+                event_type="bedrock_briefing",
+                tick=world.tick,
+                entity_id=drone.drone_id,
+                message=briefing,
+                severity=new_fire.severity,
+            )
+
+            world.events.append(briefing_event)
+            world.event_log.append(
+                f"[tick {world.tick}] Bedrock briefing: {briefing}"
+            )
+
+            print(f"[Bedrock] {briefing}")
+
+        except Exception as exc:
+            # A briefing failure must not undo a successful reroute.
+            print(f"[Bedrock] Briefing unavailable: {exc}")
+
         break
 
 
